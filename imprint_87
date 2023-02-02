@@ -1,0 +1,122 @@
+def JOB_STATUS
+pipeline {
+    agent {
+        node {
+            label 'Deepak_System'
+        }
+    }
+    stages {
+        stage("Intial Setup") {
+            steps {
+                script{
+                echo "-----------------------------------------"
+                echo 'Setting the DisplayName'
+				echo "-----------------------------------------"
+				currentBuild.displayName = "${BUILD_ID} CCA Test Pipeline: Adapter ${Adapter_Type}"
+				echo "-----------------------------------------"
+                echo 'Setting the Description'
+				echo "-----------------------------------------"
+				currentBuild.description = "Current Job is running against Firmware ${CCA_FIRMWARE} in ${RUN_MODE} mode"
+                }
+                
+            }
+        }
+        stage('Fetch the TS') {
+            steps {
+                echo "-----------------------------------------"
+                echo 'Clean The Env'
+				echo "-----------------------------------------"
+				//cleanWs()
+			    echo "-----------------------------------------"
+                echo 'Fetching the Test script from Gerrit'
+				echo "-----------------------------------------"
+                //git branch: 'master', credentialsId: 'Test-Team-Jenkins-Gerrit', url: 'ssh://0b8632649@fwgerrit.boeblingen.de.ibm.com:29418/clt-crypto-test-cca'
+
+            }
+        }
+        stage('FETCH THE LATEST RC BUILD') {
+            steps {
+				echo "-----------------------------------------"
+                echo "Fetching the latest Test build"
+				echo "-----------------------------------------"
+                sh '''
+                pwd
+                #sed -i 's/CCA_ADAPTER=""/CCA_ADAPTER='"$Adapter_Type"'/' pull_4769_rc_code.sh
+                #sed -i 's/CCA_FIRMWARE=""/CCA_FIRMWARE='"$CCA_FIRMWARE"'/' pull_4769_rc_code.sh
+                echo "pull_4769_rc_code.sh script has been updated"
+                echo "Copy the pull_4769_rc_code.sh script"
+               #./pull_4769_rc_code.sh
+                '''
+            }
+        }
+        stage('ENV SETUP AND START TESTS') {
+            steps {
+                echo "-----------------------------------------"
+                echo "Setting the env variable and Start the regression"
+				echo "-----------------------------------------"
+                sh '''
+                ROOT_DIR=$(printenv JOB_NAME)
+                rm -rf hashing_in_process
+                pwd
+                #echo "./regression.sh $Adapter_Type $CCA_ADAPTER_SELECTION $S390_DOMAIN_NUM $CSU_DEFAULT_ADAPTER $ROOT_DIR $TEST_MODE $RUN_MODE $TEST_CASE"
+                #./regression.sh $Adapter_Type $CCA_ADAPTER_SELECTION $S390_DOMAIN_NUM $CSU_DEFAULT_ADAPTER $ROOT_DIR $TEST_MODE $RUN_MODE $TEST_CASE
+				cp /home/deepak/Team_Test/TestSample/temp.csv .
+				cp /home/deepak/Team_Test/TestSample/csv_2_html.py .
+				CSV_FILE_NAME=$(ls -l |find . -name '*.csv')
+				#cp $CSV_FILE_NAME cca_"$BUILD_ID"_"$Adapter_Type"_"$CCA_FIRMWARE".csv
+                python csv_2_html.py $CSV_FILE_NAME
+                '''
+				echo "-----------------------------------------"
+				echo "archiving the artifacts"
+				echo "-----------------------------------------"
+				archiveArtifacts artifacts: '*.err, *_err.cas, *.lnx, *.csv', followSymlinks: false
+            }
+        }
+        stage('Generate the HTML Report') {
+            steps {
+                echo "Geneate the HTML Report"
+                sh '''
+                mkdir -p Test_Report; mv crypto_report.html Test_Report
+                '''
+                 // publish html
+                publishHTML([
+							allowMissing: true,
+							alwaysLinkToLastBuild: true,
+							includes: '**/*.html',
+							keepAll: true,
+							reportDir: 'Test_Report',
+							reportFiles: 'crypto_report.html',
+							reportName: 'CCA Test Report',
+							reportTitles: 'Crypto Test Report'
+                    ])   
+            }
+        }
+        stage('Clean the env once the build is completed') {
+            steps {
+                echo "-----------------------------------------"
+                echo "Clean the workspace and Archive the build generated artifacts "
+				echo "-----------------------------------------"
+				sh '''
+				echo "Hello"
+				#sh 'exit 1'
+				#rm -rf regression.sh
+				#rm -rf pull_4769_rc_code.sh
+				#rm -rf $Adapter_Type*
+				#cleanWs(patterns: [[pattern: '*.csv,  *.lnx, *.err,  *_err.cas', type: 'INCLUDE']])
+                '''
+            }
+        }
+    }
+    post {
+        always {
+            script {
+                // Notify the build result in slack
+                JOB_STATUS="${currentBuild.getCurrentResult()}"
+                // WORKSPACE="${build.workspace()}"
+                sh """
+                curl -X POST -F channel=test_jenkins_slack -F text="Jenkins Pipeline Build ID: ${BUILD_ID} is ${JOB_STATUS}. Details: Job: $JOB_NAME with Adapter: ${Adapter_Type} and Firmware: ${CCA_FIRMWARE} in ${RUN_MODE} mode - Build URL: ${BUILD_URL}" https://slack.com/api/chat.postMessage -H "Authorization:  Bearer xoxb-359950653876-YuXG5jhOWRIfMR08QM7INLgb"
+                """
+            }
+        }
+    }
+}
